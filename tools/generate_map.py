@@ -2,24 +2,31 @@
 Generating color and height map using Microsoft Planetary Computer STAC API
 """
 
+import json
+import urllib.parse
+import urllib.request
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import planetary_computer
 import pystac_client
+from pyproj import Transformer
 import rasterio
 from matplotlib.figure import Figure
 from numpy.typing import NDArray
 from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds
 
-
+NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 STAC_URL: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
+USER_AGENT: str = "comanche-voxel-map-builder/1.0"
+LOCATION_QUERY: str = "Mount St. Helens, Washington"
+MAP_SIZE_METERS: float = 10240.0
 GRID_SIZE: int = 1024
 
 # Example: Grand Canyon, AZ [min_lon, min_lat, max_lon, max_lat]
-TARGET_BBOX: list[float] = [-112.18, 36.05, -112.06, 36.15]
+#  TARGET_BBOX: list[float] = [-112.18, 36.05, -112.06, 36.15]
 DATE_RANGE: str = "2024-06-01/2024-09-30"
 MAX_CLOUD_COVER: float = 5.0
 
@@ -159,18 +166,90 @@ def plot_satellite_grids(
 
     return fig
 
+def geocode_location(place_name: str, user_agent: str) -> tuple[float, float]:
+    """Resolve a human-readable location name to (latitude, longitude) via OSM Nominatim.
+
+    Parameters
+    ----------
+    place_name : str
+        Location query string (e.g., "Mont-Tremblant, Quebec").
+    user_agent : str
+        Descriptive User-Agent header required by Nominatim's usage policy.
+
+    Returns
+    -------
+    tuple[float, float]
+        Center coordinates as (center_lat, center_lon) in WGS84 decimal degrees.
+
+    Caveats
+    -------
+    Nominatim enforces a maximum rate of 1 request per second and requires a
+    non-generic User-Agent header. Raises ValueError if no match is found.
+    """
+    params = urllib.parse.urlencode({"q": place_name, "format": "json", "limit": 1})
+    request = urllib.request.Request(
+        f"{NOMINATIM_URL}?{params}",
+        headers={"User-Agent": user_agent},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        results: list[dict[str, str]] = json.loads(response.read().decode("utf-8"))
+
+    if not results:
+        raise ValueError(f"No coordinates found for location: {place_name!r}")
+
+    return float(results[0]["lat"]), float(results[0]["lon"])
+
+def bbox_from_center(
+    center_lat: float,
+    center_lon: float,
+    size_meters: float,
+) -> list[float]:
+    """Compute a physically square WGS84 bounding box from a center point and width.
+
+    Parameters
+    ----------
+    center_lat : float
+        Center latitude in decimal degrees (WGS84).
+    center_lon : float
+        Center longitude in decimal degrees (WGS84).
+    size_meters : float
+        Width and height of the square terrain patch in meters.
+
+    Returns
+    -------
+    list[float]
+        WGS84 bounding box [min_lon, min_lat, max_lon, max_lat].
+
+    Examples
+    --------
+    >>> bbox_from_center(36.10, -112.12, 10240.0)
+    [-112.1768..., 36.0538..., -112.0631..., 36.1461...]
+    """
+    local_crs = f"+proj=aeqd +lat_0={center_lat} +lon_0={center_lon} +datum=WGS84 +units=m"
+    to_wgs84 = Transformer.from_crs(local_crs, "EPSG:4326", always_xy=True)
+
+    half_size = size_meters / 2.0
+    min_lon, min_lat = to_wgs84.transform(-half_size, -half_size)
+    max_lon, max_lat = to_wgs84.transform(half_size, half_size)
+
+    return [min_lon, min_lat, max_lon, max_lat]
+
 
 # --- Execution ---
+center_lat, center_lon = geocode_location(LOCATION_QUERY, USER_AGENT)
+target_bbox = bbox_from_center(center_lat, center_lon, MAP_SIZE_METERS)
+print(f"{LOCATION_QUERY} -> lat={center_lat:.5f}, lon={center_lon:.5f}")
+
 catalog = open_catalog(STAC_URL)
 
-s2_item = search_best_sentinel_item(catalog, TARGET_BBOX, DATE_RANGE, MAX_CLOUD_COVER)
-dem_item = search_dem_item(catalog, TARGET_BBOX)
+s2_item = search_best_sentinel_item(catalog, target_bbox, DATE_RANGE, MAX_CLOUD_COVER)
+dem_item = search_dem_item(catalog, target_bbox)
 
 print(f"Sentinel-2 ID: {s2_item.id} | Clouds: {s2_item.properties['eo:cloud_cover']}%")
 print(f"DEM ID:        {dem_item.id}")
 
-rgb_raw = read_cropped_grid(s2_item.assets["visual"].href, TARGET_BBOX, GRID_SIZE)
-elev_raw = read_cropped_grid(dem_item.assets["data"].href, TARGET_BBOX, GRID_SIZE)
+rgb_raw = read_cropped_grid(s2_item.assets["visual"].href, target_bbox, GRID_SIZE)
+elev_raw = read_cropped_grid(dem_item.assets["data"].href, target_bbox, GRID_SIZE)
 
 print(f"RGB shape: {rgb_raw.shape}, dtype: {rgb_raw.dtype}")
 print(f"DEM shape: {elev_raw.shape}, min/max m: {elev_raw.min():.1f} / {elev_raw.max():.1f}")

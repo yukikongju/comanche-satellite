@@ -5,6 +5,7 @@ Generating color and height map using Microsoft Planetary Computer STAC API
 import json
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -30,6 +31,8 @@ GRID_SIZE: int = 1024
 DATE_RANGE: str = "2024-06-01/2024-09-30"
 MAX_CLOUD_COVER: float = 5.0
 
+RGB_GIF_PATH: Path = Path("../assets/map0_color.gif")
+ELEV_GIF_PATH: Path = Path("../assets/map0_height.gif")
 
 def open_catalog(url: str) -> pystac_client.Client:
     """Open the Planetary Computer STAC catalog with automatic SAS signing.
@@ -234,6 +237,36 @@ def bbox_from_center(
 
     return [min_lon, min_lat, max_lon, max_lat]
 
+def save_grid_to_gif(
+    grid: NDArray[Any],
+    output_path: Path,
+    cmap: str | None = None,
+) -> None:
+    """Save a single (bands, height, width) raster grid as a GIF image.
+
+    Parameters
+    ----------
+    grid : NDArray[Any]
+        Raster array of shape (3, height, width) for RGB or (1, height, width)
+        for single-band elevation data.
+    output_path : Path
+        Destination `.gif` file path.
+    cmap : str | None
+        Matplotlib colormap name for single-band grids (ignored for 3-band RGB).
+
+    Examples
+    --------
+    >>> save_grid_to_gif(rgb_raw, Path("rgb_raw.gif"))
+    >>> save_grid_to_gif(elev_raw, Path("elev_raw.gif"), cmap="terrain")
+
+    Caveats
+    -------
+    GIF quantizes colors to 256 entries, so use these files for visual preview
+    rather than as input to the C Voxel Space engine.
+    """
+    image_data = np.moveaxis(grid, 0, -1) if grid.shape[0] == 3 else grid[0]
+    plt.imsave(output_path, image_data, format="gif", cmap=cmap)
+
 
 # --- Execution ---
 center_lat, center_lon = geocode_location(LOCATION_QUERY, USER_AGENT)
@@ -256,3 +289,6 @@ print(f"DEM shape: {elev_raw.shape}, min/max m: {elev_raw.min():.1f} / {elev_raw
 
 fig = plot_satellite_grids(rgb_raw, elev_raw)
 plt.show()
+
+save_grid_to_gif(rgb_raw, RGB_GIF_PATH)
+save_grid_to_gif(elev_raw, ELEV_GIF_PATH, cmap="terrain")

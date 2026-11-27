@@ -2,7 +2,10 @@
 
 Generate real-world terrain maps from Sentinel-2 L2A and Copernicus GLO-30 DEM satellites and render them in a Voxel Space Engine, inspired by Comanche.
 
-[Watch the demo](screencasts/demo.mov)
+
+https://github.com/user-attachments/assets/7154251f-7aa7-44c1-aeb6-c730c02527de
+
+
 
 ## Prerequisites
 

@@ -16,6 +16,7 @@ from pyproj import Transformer
 import rasterio
 from matplotlib.figure import Figure
 from numpy.typing import NDArray
+from PIL import Image
 from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds
 
@@ -37,6 +38,10 @@ ELEV_GIF_PATH: Path = Path("../assets/map0_height.gif")
 FIG_SIZE: tuple[int, int] = (12, 6)
 COLORBAR_FRACTION: float = 0.046
 COLORBAR_PAD: float = 0.04
+
+SKY_RGB: tuple[int, int, int] = (36, 36, 56)
+MAX_TERRAIN_COLORS: int = 180
+DEFAULT_MAX_HEIGHT: int = 120
 
 def open_catalog(url: str) -> pystac_client.Client:
     """Open the Planetary Computer STAC catalog with automatic SAS signing.
@@ -253,35 +258,87 @@ def bbox_from_center(
 
     return [min_lon, min_lat, max_lon, max_lat]
 
-def save_grid_to_gif(
-    grid: NDArray[Any],
+
+def save_heightmap_gif(
+    elev_grid: NDArray[np.float32],
     output_path: Path,
-    cmap: str | None = None,
+    max_height: int = DEFAULT_MAX_HEIGHT,
 ) -> None:
-    """Save a single (height, width, bands) raster grid as a GIF image.
+    """Normalize a (height, width, 1) elevation grid and save as a mode 'L' GIF.
 
     Parameters
     ----------
-    grid : NDArray[Any]
-        Raster array of shape ``(height, width, 3)`` for RGB or ``(height, width, 1)``
-        for single-band elevation data.
+    elev_grid : NDArray[np.float32]
+        Array of shape ``(height, width, 1)`` containing elevation in meters.
     output_path : Path
         Destination ``.gif`` file path.
-    cmap : str | None
-        Matplotlib colormap name for single-band grids (ignored for 3-band RGB).
+    max_height : int
+        Maximum uint8 height value (default 120 matches reference map0.height.gif).
 
     Examples
     --------
-    >>> save_grid_to_gif(rgb_raw, Path("rgb_raw.gif"))
-    >>> save_grid_to_gif(elev_raw, Path("elev_raw.gif"), cmap="terrain")
+    >>> elev = np.linspace(0, 500, 1024 * 1024, dtype=np.float32).reshape(1024, 1024, 1)
+    >>> save_heightmap_gif(elev, Path("map0_height.gif"))
 
     Caveats
     -------
-    GIF quantizes colors to 256 entries, so use these files for visual preview
-    rather than as input to the C Voxel Space engine.
+    Saves in PIL ``"L"`` mode so raw GIF byte values directly equal elevation
+    heights without palette scrambling in ``dos.h`` ``loadgif()``.
     """
-    image_data = grid[:, :, 0] if grid.shape[-1] == 1 else grid
-    plt.imsave(output_path, image_data, format="gif", cmap=cmap)
+    elev_2d = elev_grid[:, :, 0]
+    elev_min = float(np.nanmin(elev_2d))
+    elev_max = float(np.nanmax(elev_2d))
+    span = max(elev_max - elev_min, 1e-6)
+
+    normalized = np.clip((elev_2d - elev_min) / span, 0.0, 1.0)
+    height_uint8 = np.rint(normalized * max_height).astype(np.uint8)
+
+    Image.fromarray(height_uint8, mode="L").save(output_path, format="GIF")
+
+
+def save_colormap_gif(
+    rgb_grid: NDArray[np.uint8],
+    output_path: Path,
+    num_colors: int = MAX_TERRAIN_COLORS,
+    sky_rgb: tuple[int, int, int] = SKY_RGB,
+) -> None:
+    """Quantize a (height, width, 3) RGB grid to a mode 'P' GIF with index 0 reserved for sky.
+
+    Parameters
+    ----------
+    rgb_grid : NDArray[np.uint8]
+        Array of shape ``(height, width, 3)`` containing uint8 RGB values.
+    output_path : Path
+        Destination ``.gif`` file path.
+    num_colors : int
+        Number of palette entries for terrain colors (1 to 255).
+    sky_rgb : tuple[int, int, int]
+        RGB triplet placed at palette index 0 for ``clearscreen()`` background.
+
+    Examples
+    --------
+    >>> rgb = np.zeros((1024, 1024, 3), dtype=np.uint8)
+    >>> save_colormap_gif(rgb, Path("map0_color.gif"))
+
+    Caveats
+    -------
+    ``dos.h`` ``clearscreen()`` fills the screen with palette index 0, so terrain
+    indices are shifted to ``1..num_colors`` to prevent terrain-sky bleed.
+    """
+    rgb_img = Image.fromarray(rgb_grid, mode="RGB")
+    quantized = rgb_img.quantize(colors=num_colors, method=Image.Quantize.MEDIANCUT)
+
+    raw_indices = np.asarray(quantized, dtype=np.uint8)
+    shifted_indices = (raw_indices + 1).astype(np.uint8)
+
+    src_palette = quantized.getpalette() or []
+    terrain_palette = src_palette[: num_colors * 3]
+    full_palette = list(sky_rgb) + terrain_palette
+    full_palette.extend([0] * (256 * 3 - len(full_palette)))
+
+    out_img = Image.fromarray(shifted_indices, mode="P")
+    out_img.putpalette(full_palette)
+    out_img.save(output_path, format="GIF")
 
 
 # --- Execution ---
@@ -306,5 +363,6 @@ print(f"DEM shape: {elev_raw.shape}, min/max m: {elev_raw.min():.1f} / {elev_raw
 fig = plot_satellite_grids(rgb_raw, elev_raw)
 plt.show()
 
-save_grid_to_gif(rgb_raw, RGB_GIF_PATH)
-save_grid_to_gif(elev_raw, ELEV_GIF_PATH, cmap="terrain")
+save_heightmap_gif(elev_raw, ELEV_GIF_PATH, DEFAULT_MAX_HEIGHT)
+save_colormap_gif(rgb_raw, RGB_GIF_PATH, MAX_TERRAIN_COLORS, SKY_RGB)
+

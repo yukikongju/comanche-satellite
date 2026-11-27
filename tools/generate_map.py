@@ -34,6 +34,10 @@ MAX_CLOUD_COVER: float = 5.0
 RGB_GIF_PATH: Path = Path("../assets/map0_color.gif")
 ELEV_GIF_PATH: Path = Path("../assets/map0_height.gif")
 
+FIG_SIZE: tuple[int, int] = (12, 6)
+COLORBAR_FRACTION: float = 0.046
+COLORBAR_PAD: float = 0.04
+
 def open_catalog(url: str) -> pystac_client.Client:
     """Open the Planetary Computer STAC catalog with automatic SAS signing.
 
@@ -127,13 +131,12 @@ def read_cropped_grid(
     with rasterio.open(cog_href) as src:
         native_bounds = transform_bounds("EPSG:4326", src.crs, *wgs84_bbox)
         window = from_bounds(*native_bounds, transform=src.transform)
-        return src.read(
+        data = src.read(
             window=window,
             out_shape=(src.count, grid_size, grid_size),
             resampling=rasterio.enums.Resampling.bilinear,
         )
-
-
+    return np.moveaxis(data, 0, -1)
 
 def plot_satellite_grids(
     rgb_bands: NDArray[np.uint8],
@@ -144,28 +147,41 @@ def plot_satellite_grids(
     Parameters
     ----------
     rgb_bands : NDArray[np.uint8]
-        Array of shape (3, height, width) containing RGB channels.
+        Array of shape ``(height, width, 3)`` containing RGB channels.
     elev_bands : NDArray[np.float32]
-        Array of shape (1, height, width) containing elevation in meters.
+        Array of shape ``(height, width, 1)`` containing elevation in meters.
 
     Returns
     -------
     Figure
         Matplotlib figure displaying the colormap and heightmap side by side.
+
+    Examples
+    --------
+    >>> rgb = np.zeros((256, 256, 3), dtype=np.uint8)
+    >>> elev = np.zeros((256, 256, 1), dtype=np.float32)
+    >>> fig = plot_satellite_grids(rgb, elev)
     """
-    rgb_image = np.moveaxis(rgb_bands, 0, -1)
-    elevation_grid = elev_bands[0]
+    elevation_grid = elev_bands[:, :, 0]
 
-    fig, (ax_rgb, ax_elev) = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
+    fig, (ax_rgb, ax_elev) = plt.subplots(
+        1, 2, figsize=FIG_SIZE, constrained_layout=True
+    )
 
-    ax_rgb.imshow(rgb_image)
+    ax_rgb.imshow(rgb_bands)
     ax_rgb.set_title("Sentinel-2 True Color (rgb_raw)")
     ax_rgb.axis("off")
 
     elev_plot = ax_elev.imshow(elevation_grid, cmap="terrain")
     ax_elev.set_title("Copernicus DEM 30m (elev_raw)")
     ax_elev.axis("off")
-    fig.colorbar(elev_plot, ax=ax_elev, fraction=0.046, pad=0.04, label="Elevation (m)")
+    fig.colorbar(
+        elev_plot,
+        ax=ax_elev,
+        fraction=COLORBAR_FRACTION,
+        pad=COLORBAR_PAD,
+        label="Elevation (m)",
+    )
 
     return fig
 
@@ -242,15 +258,15 @@ def save_grid_to_gif(
     output_path: Path,
     cmap: str | None = None,
 ) -> None:
-    """Save a single (bands, height, width) raster grid as a GIF image.
+    """Save a single (height, width, bands) raster grid as a GIF image.
 
     Parameters
     ----------
     grid : NDArray[Any]
-        Raster array of shape (3, height, width) for RGB or (1, height, width)
+        Raster array of shape ``(height, width, 3)`` for RGB or ``(height, width, 1)``
         for single-band elevation data.
     output_path : Path
-        Destination `.gif` file path.
+        Destination ``.gif`` file path.
     cmap : str | None
         Matplotlib colormap name for single-band grids (ignored for 3-band RGB).
 
@@ -264,7 +280,7 @@ def save_grid_to_gif(
     GIF quantizes colors to 256 entries, so use these files for visual preview
     rather than as input to the C Voxel Space engine.
     """
-    image_data = np.moveaxis(grid, 0, -1) if grid.shape[0] == 3 else grid[0]
+    image_data = grid[:, :, 0] if grid.shape[-1] == 1 else grid
     plt.imsave(output_path, image_data, format="gif", cmap=cmap)
 
 

@@ -1,7 +1,10 @@
 """
 Generating color and height map using Microsoft Planetary Computer STAC API
+
+uv run generate_map.py "Mount St. Helens, Washington" --colormap_path "assets/map0_color.gif" --heightmap_path "assets/map0_height.gif"
 """
 
+import argparse
 import json
 import urllib.parse
 import urllib.request
@@ -23,17 +26,18 @@ from rasterio.windows import from_bounds
 NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 STAC_URL: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
 USER_AGENT: str = "comanche-voxel-map-builder/1.0"
-LOCATION_QUERY: str = "Mount St. Helens, Washington"
+#  LOCATION_QUERY: str = "Mount St. Helens, Washington"
+#  LOCATION_QUERY: str = "Mont Tremblant, Quebec"
 MAP_SIZE_METERS: float = 10240.0
 GRID_SIZE: int = 1024
 
 # Example: Grand Canyon, AZ [min_lon, min_lat, max_lon, max_lat]
 #  TARGET_BBOX: list[float] = [-112.18, 36.05, -112.06, 36.15]
-DATE_RANGE: str = "2024-06-01/2024-09-30"
+DATE_RANGE: str = "2026-06-01/2026-09-30"
 MAX_CLOUD_COVER: float = 5.0
 
-RGB_GIF_PATH: Path = Path("../assets/map0_color.gif")
-ELEV_GIF_PATH: Path = Path("../assets/map0_height.gif")
+DEFAULT_RGB_GIF_PATH: Path = Path("../assets/map0_color.gif")
+DEFAULT_ELEV_GIF_PATH: Path = Path("../assets/map0_height.gif")
 
 FIG_SIZE: tuple[int, int] = (12, 6)
 COLORBAR_FRACTION: float = 0.046
@@ -340,29 +344,37 @@ def save_colormap_gif(
     out_img.putpalette(full_palette)
     out_img.save(output_path, format="GIF")
 
+def main():
+    parser = argparse.ArgumentParser(description="Generate Colormap & Heightmap from Location Query")
+    parser.add_argument("location",type=str, help="Location Query (ex: Mont Tremblant, Quebec)")
+    parser.add_argument("--colormap_path", type=str, help="Path to save colormap", default=DEFAULT_RGB_GIF_PATH)
+    parser.add_argument("--heightmap_path", type=str, help="Path to save heightmap", default=DEFAULT_ELEV_GIF_PATH)
 
-# --- Execution ---
-center_lat, center_lon = geocode_location(LOCATION_QUERY, USER_AGENT)
-target_bbox = bbox_from_center(center_lat, center_lon, MAP_SIZE_METERS)
-print(f"{LOCATION_QUERY} -> lat={center_lat:.5f}, lon={center_lon:.5f}")
+    args = parser.parse_args()
 
-catalog = open_catalog(STAC_URL)
+    center_lat, center_lon = geocode_location(args.location, USER_AGENT)
+    target_bbox = bbox_from_center(center_lat, center_lon, MAP_SIZE_METERS)
+    print(f"{args.location} -> lat={center_lat:.5f}, lon={center_lon:.5f}")
 
-s2_item = search_best_sentinel_item(catalog, target_bbox, DATE_RANGE, MAX_CLOUD_COVER)
-dem_item = search_dem_item(catalog, target_bbox)
+    catalog = open_catalog(STAC_URL)
 
-print(f"Sentinel-2 ID: {s2_item.id} | Clouds: {s2_item.properties['eo:cloud_cover']}%")
-print(f"DEM ID:        {dem_item.id}")
+    s2_item = search_best_sentinel_item(catalog, target_bbox, DATE_RANGE, MAX_CLOUD_COVER)
+    dem_item = search_dem_item(catalog, target_bbox)
 
-rgb_raw = read_cropped_grid(s2_item.assets["visual"].href, target_bbox, GRID_SIZE)
-elev_raw = read_cropped_grid(dem_item.assets["data"].href, target_bbox, GRID_SIZE)
+    print(f"Sentinel-2 ID: {s2_item.id} | Clouds: {s2_item.properties['eo:cloud_cover']}%")
+    print(f"DEM ID:        {dem_item.id}")
 
-print(f"RGB shape: {rgb_raw.shape}, dtype: {rgb_raw.dtype}")
-print(f"DEM shape: {elev_raw.shape}, min/max m: {elev_raw.min():.1f} / {elev_raw.max():.1f}")
+    rgb_raw = read_cropped_grid(s2_item.assets["visual"].href, target_bbox, GRID_SIZE)
+    elev_raw = read_cropped_grid(dem_item.assets["data"].href, target_bbox, GRID_SIZE)
 
-fig = plot_satellite_grids(rgb_raw, elev_raw)
-plt.show()
+    print(f"RGB shape: {rgb_raw.shape}, dtype: {rgb_raw.dtype}")
+    print(f"DEM shape: {elev_raw.shape}, min/max m: {elev_raw.min():.1f} / {elev_raw.max():.1f}")
 
-save_heightmap_gif(elev_raw, ELEV_GIF_PATH, DEFAULT_MAX_HEIGHT)
-save_colormap_gif(rgb_raw, RGB_GIF_PATH, MAX_TERRAIN_COLORS, SKY_RGB)
+    #  fig = plot_satellite_grids(rgb_raw, elev_raw)
+    #  plt.show()
 
+    save_heightmap_gif(elev_raw, args.heightmap_path, DEFAULT_MAX_HEIGHT)
+    save_colormap_gif(rgb_raw, args.colormap_path, MAX_TERRAIN_COLORS, SKY_RGB)
+
+if __name__ == "__main__":
+    main()

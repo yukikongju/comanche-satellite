@@ -34,7 +34,7 @@ typedef struct {
 camera_t camera = {
     .x = 512.0,
     .y = 512.0,
-    .height = 70.0,
+    .height = 170.0, // fix height based on elevation
     .horizon = 60.0,
     .zfar = 600.0,
     .angle = 1.5 * 3.141592 // (= 270 deg)
@@ -89,16 +89,14 @@ int main(int argc, char *args[]) {
   }
   char colormapPath[64];
   char heightmapPath[64];
-  snprintf(colormapPath, sizeof(colormapPath), "maps/gif/map%d.color.gif",
-           mapId);
-  snprintf(heightmapPath, sizeof(heightmapPath), "maps/gif/map%d.height.gif",
-           mapId);
-  /* snprintf(colormapPath, sizeof(colormapPath), "../assets/map%d_color.gif",
+  /* snprintf(colormapPath, sizeof(colormapPath), "maps/gif/map%d.color.gif", */
+  /* mapId); */
+  /* snprintf(heightmapPath, sizeof(heightmapPath), "maps/gif/map%d.height.gif",
    */
   /* mapId); */
-  /* snprintf(heightmapPath, sizeof(heightmapPath),
-   * "../assets/map%d_height.gif", */
-  /* mapId); */
+  snprintf(colormapPath, sizeof(colormapPath), "assets/map%d_color.gif", mapId);
+  snprintf(heightmapPath, sizeof(heightmapPath), "assets/map%d_height.gif",
+           mapId);
 
   // Declare an array to hold the max. number of possible colors (*3 for RGB)
   uint8_t palette[256 * 3];
